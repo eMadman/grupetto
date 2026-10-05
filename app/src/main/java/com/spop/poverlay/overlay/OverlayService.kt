@@ -475,9 +475,10 @@ class OverlayService : LifecycleEnabledService() {
             bleServer.setDirConTransportEnabled(dirConEnabled)
         }
 
-        val antEnabled = antPlusServer.isSupported && getSharedPreferences(
-            ConfigurationRepository.SharedPrefsName, MODE_PRIVATE
-        ).getBoolean(ConfigurationRepository.Preferences.AntPlusTxEnabled.key, false)
+        val preferences = getSharedPreferences(ConfigurationRepository.SharedPrefsName, MODE_PRIVATE)
+        val antEnabled = antPlusServer.isSupported &&
+            preferences.getBoolean(ConfigurationRepository.Preferences.AntPlusTxEnabled.key, false)
+        antPlusServer.setFecEnabled(preferences.getBoolean(ConfigurationRepository.Preferences.AntPlusFecEnabled.key, false))
         if (antEnabled) antPlusServer.start() else antPlusServer.stop()
 
         if (shouldRunBle || dirConEnabled || antEnabled) {

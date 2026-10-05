@@ -82,6 +82,9 @@ class ConfigurationViewModel(
     val antPlusTxEnabled
         get() = configurationRepository.antPlusTxEnabled
 
+    val antPlusFecEnabled
+        get() = configurationRepository.antPlusFecEnabled
+
 
     private val bleServer = (application as GrupettoApplication).bleServer
     private val antPlusServer = (application as GrupettoApplication).antPlusServer
@@ -208,8 +211,17 @@ class ConfigurationViewModel(
         requestBatteryOptimizationExemptionIfNeeded()
     }
 
+    /** FE-C trainer control is offered only where Grupetto can drive the motor. */
+    val antPlusFecSupported: Boolean get() = antPlusSupported && antPlusServer.fecSupported
+
+    fun onAntPlusFecEnabledClicked(isChecked: Boolean) {
+        configurationRepository.setAntPlusFecEnabled(isChecked)
+        syncAntPlusTransport()
+    }
+
     private fun syncAntPlusTransport() {
         if (isPreview) return
+        antPlusServer.setFecEnabled(antPlusFecEnabled.value)
         if (antPlusTxEnabled.value && antPlusSupported) antPlusServer.start()
         else antPlusServer.stop()
     }

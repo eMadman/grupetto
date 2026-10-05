@@ -21,6 +21,7 @@ class ConfigurationRepository(context: Context, lifecycleOwner: LifecycleOwner, 
         OverlayHorizontalOffset("overlayHorizontalOffset"),
         OverlayLocation("overlayLocation"),
         AntPlusTxEnabled("antPlusTxEnabled"),
+        AntPlusFecEnabled("antPlusFecEnabled"),
         AutoStartOnBoot("autoStartOnBoot"),
         SerialNumber("serialNumber")
     }
@@ -40,6 +41,7 @@ class ConfigurationRepository(context: Context, lifecycleOwner: LifecycleOwner, 
     private val mutableDirConEnabled = MutableStateFlow(true)
     private val mutableBleFtmsDeviceName = MutableStateFlow("Grupetto FTMS")
     private val mutableAntPlusTxEnabled = MutableStateFlow(false)
+    private val mutableAntPlusFecEnabled = MutableStateFlow(false)
     private val mutableAutoStartOnBoot = MutableStateFlow(false)
     private val mutableSerialNumber = MutableStateFlow("")
 
@@ -48,6 +50,7 @@ class ConfigurationRepository(context: Context, lifecycleOwner: LifecycleOwner, 
     val dirConEnabled = mutableDirConEnabled
     val bleFtmsDeviceName = mutableBleFtmsDeviceName
     val antPlusTxEnabled = mutableAntPlusTxEnabled
+    val antPlusFecEnabled = mutableAntPlusFecEnabled
     val autoStartOnBoot = mutableAutoStartOnBoot
     val serialNumber = mutableSerialNumber
 
@@ -121,6 +124,13 @@ class ConfigurationRepository(context: Context, lifecycleOwner: LifecycleOwner, 
         }
     }
 
+    fun setAntPlusFecEnabled(enabled: Boolean) {
+        mutableAntPlusFecEnabled.value = enabled
+        sharedPreferences.edit {
+            putBoolean(Preferences.AntPlusFecEnabled.key, enabled)
+        }
+    }
+
     fun setAutoStartOnBoot(enabled: Boolean) {
         mutableAutoStartOnBoot.value = enabled
         sharedPreferences.edit {
@@ -180,6 +190,10 @@ class ConfigurationRepository(context: Context, lifecycleOwner: LifecycleOwner, 
         mutableAntPlusTxEnabled.value =
             sharedPreferences
                 .getBoolean(Preferences.AntPlusTxEnabled.key, false)
+
+        mutableAntPlusFecEnabled.value =
+            sharedPreferences
+                .getBoolean(Preferences.AntPlusFecEnabled.key, false)
 
         mutableAutoStartOnBoot.value =
             sharedPreferences.getBoolean(Preferences.AutoStartOnBoot.key, false)

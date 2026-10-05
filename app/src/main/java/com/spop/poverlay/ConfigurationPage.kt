@@ -38,6 +38,7 @@ fun ConfigurationPage(viewModel: ConfigurationViewModel) {
     val ble by viewModel.bleTxEnabled.collectAsStateWithLifecycle()
     val dircon by viewModel.dirConEnabled.collectAsStateWithLifecycle()
     val ant by viewModel.antPlusTxEnabled.collectAsStateWithLifecycle()
+    val antFec by viewModel.antPlusFecEnabled.collectAsStateWithLifecycle()
     val running by viewModel.isOverlayRunning.collectAsStateWithLifecycle()
     val background by viewModel.backgroundLocationGranted.collectAsStateWithLifecycle()
     val hr by viewModel.hrConnectedDevice.collectAsStateWithLifecycle()
@@ -105,7 +106,7 @@ fun ConfigurationPage(viewModel: ConfigurationViewModel) {
                     SettingsTile("Broadcast connections", Modifier.weight(1f).fillMaxHeight(), Color(0xFF60A5FA)) {
                         ConnectionSummary("Bluetooth", if (viewModel.isPreview) "Preview" else if (ble) "On · Grupetto" else "Off", ble)
                         ConnectionSummary("Network", if (viewModel.isPreview) "Preview" else if (dircon) "On · DirCon" else "Off", dircon)
-                        if (viewModel.antPlusSupported) ConnectionSummary("ANT+", if (viewModel.isPreview) "Preview" else if (ant) "On · IDs 1 / 2 / 3" else "Off", ant)
+                        if (viewModel.antPlusSupported) ConnectionSummary("ANT+", if (viewModel.isPreview) "Preview" else if (ant) "On · IDs 1 / 2 / 3" + (if (antFec && viewModel.antPlusFecSupported) " / 4" else "") else "Off", ant)
                         Spacer(Modifier.weight(1f))
                         TileActionButton("Manage connections", { dialog = "connections" })
                     }
@@ -208,6 +209,11 @@ fun ConfigurationPage(viewModel: ConfigurationViewModel) {
                 Divider(Modifier.padding(vertical = 12.dp))
                 SettingSwitch("ANT+ broadcast", ant, viewModel::onAntPlusTxEnabledClicked)
                 Text("ANT+ sensor IDs: power 1 · speed/cadence 2 · HR 3", fontSize = 14.sp)
+                if (viewModel.antPlusFecSupported) {
+                    SettingSwitch("ANT+ smart trainer (FE-C)", antFec, viewModel::onAntPlusFecEnabledClicked)
+                    Text("Pair as a smart trainer on Garmin: ID 4. Grants bike control like Bluetooth/DirCon; " +
+                        "pair the trainer instead of power 1 and speed/cadence 2.", fontSize = 14.sp, color = Color(0xFF9EAEC0))
+                }
             }
         }
         "bike" -> if (bike.connected) SettingsDialog("Bike+ / CrossTrainer", { dialog = null }) {

@@ -110,6 +110,14 @@ details, Sim behavior, limits, and hardware validation still needed.
   ANT Radio Service installed and a compatible radio. Pair device **1** for power,
   **2** for speed/cadence, and **3** for heart rate. The cycling ANT+ option is
   hidden on detected Treads; their BLE speed/incline support is unchanged.
+- On a Bike+ or CrossTrainer, **ANT+ smart trainer (FE-C)** adds a controllable
+  trainer as device **4**, so Garmin Edges and watches can run ERG workouts
+  (target power), set a resistance level, and follow course slope. On the Garmin,
+  pair it as a smart trainer together with heart rate **3**; the trainer already
+  reports power, cadence, and speed, so pairing power **1** and speed/cadence **2**
+  as well is unnecessary (keep those for head units without FE-C). Only one
+  controller drives the bike at a time: if a Bluetooth or DirCon app already has
+  control, Garmin commands are rejected until it releases control.
 - **Auto-start on boot** is opt-in and requires permission to draw over other
   apps. For automatic heart-rate reconnection after boot, allow background
   location when Android requests it and keep the saved monitor nearby.
