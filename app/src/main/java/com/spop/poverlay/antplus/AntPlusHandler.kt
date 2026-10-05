@@ -604,14 +604,7 @@ class AntPlusHandler(
     @Synchronized
     private fun handleAcknowledgedData(messageParcel: AntMessageParcel) {
         val payload = AcknowledgedDataMessage(messageParcel).payload
-        if (payload.size < AntPlusConstants.ANT_MESSAGE_SIZE) {
-            return
-        }
-
-        val isCapabilitiesRequest = payload[0] == 0.toByte() &&
-            payload[1] == 1.toByte() &&
-            payload[2] == 0xAA.toByte()
-        if (!isCapabilitiesRequest) {
+        if (!AntPlusPages.isCalibrationRequest(payload)) {
             return
         }
 
@@ -632,11 +625,11 @@ class AntPlusHandler(
 
         try {
             channel.setBroadcastData(response)
-            logDebug("ANT_DEBUG: Responded to acknowledged capabilities request")
+            logDebug("ANT_DEBUG: Responded to calibration request")
         } catch (e: RemoteException) {
-            logError("ANT_DEBUG: Failed to respond to acknowledged capabilities request", e)
+            logError("ANT_DEBUG: Failed to respond to calibration request", e)
         } catch (e: AntCommandFailedException) {
-            logError("ANT_DEBUG: ANT command failed while responding to acknowledged request", e)
+            logError("ANT_DEBUG: ANT command failed while responding to calibration request", e)
         }
     }
 
