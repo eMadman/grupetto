@@ -87,4 +87,18 @@ class AntPlusPayloadTest {
         now = 2000
         assertBytes(payload("buildHrmPayload"), 0, 255, 255, 255, 0, 4, 2, 0)
     }
+
+    @Test fun `power and speed updates feed the FE-C trainer pages`() {
+        val fec = FecTrainer(com.spop.poverlay.control.BikeControl(true, { now }) { true }) { now }
+        val fecHandler = AntPlusHandler(mockk(), "Test", scope, fec)
+        fecHandler.broadcastPowerData(250, 90)
+        fecHandler.broadcastSpeedData(36f)
+        val general = fec.nextPage().bytes
+        assertEquals(16, general[0].toInt())
+        assertEquals(10_000, (general[4].toInt() and 0xFF) or ((general[5].toInt() and 0xFF) shl 8))
+        val trainer = fec.nextPage().bytes
+        assertEquals(25, trainer[0].toInt())
+        assertEquals(90, trainer[2].toInt() and 0xFF)
+        assertEquals(250, (trainer[5].toInt() and 0xFF) or ((trainer[6].toInt() and 0x0F) shl 8))
+    }
 }

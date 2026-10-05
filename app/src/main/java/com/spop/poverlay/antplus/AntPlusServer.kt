@@ -2,6 +2,7 @@ package com.spop.poverlay.antplus
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.SystemClock
 import com.spop.poverlay.sensor.heartrate.HeartRateManager
 import com.spop.poverlay.sensor.interfaces.DeviceType
 import com.spop.poverlay.sensor.interfaces.SensorInterface
@@ -16,14 +17,36 @@ class AntPlusServer(
     private val context: Context,
     private val sensorInterface: SensorInterface,
     private val heartRate: Flow<Int?> = HeartRateManager.heartRate,
-    private val handlerFactory: (CoroutineScope) -> AntPlusHandler = {
-        AntPlusHandler(context, "Grupetto ANT+", it)
-    }
+    handlerFactory: ((CoroutineScope) -> AntPlusHandler)? = null
 ) {
     private data class Session(val scope: CoroutineScope, val handler: AntPlusHandler)
     private var session: Session? = null
+    @Volatile private var fecEnabled = false
+    private val createHandler: (CoroutineScope) -> AntPlusHandler = handlerFactory ?: { scope ->
+        AntPlusHandler(context, "Grupetto ANT+", scope, newFecTrainer())
+    }
 
     val isSupported: Boolean get() = sensorInterface.deviceType == DeviceType.Bike
+
+    /** FE-C smart trainer control needs a bike whose motor Grupetto can drive. */
+    val fecSupported: Boolean get() = isSupported && sensorInterface.bikeControl?.supported == true
+
+    /** The FE-C profile for a new session, or null when disabled or unsupported. */
+    internal fun newFecTrainer(): FecTrainer? {
+        if (!fecEnabled || !fecSupported) return null
+        return sensorInterface.bikeControl?.let { FecTrainer(it, SystemClock::elapsedRealtime) }
+    }
+
+    /** Enables the FE-C channel; a running session restarts so the radio picks up the change. */
+    @Synchronized
+    fun setFecEnabled(enabled: Boolean) {
+        if (fecEnabled == enabled) return
+        fecEnabled = enabled
+        if (session != null) {
+            stop()
+            start()
+        }
+    }
 
     fun isAntPlusAvailable(): Boolean = try {
         context.packageManager.getPackageInfo("com.dsi.ant.service.socket", 0)
@@ -42,7 +65,7 @@ class AntPlusServer(
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         var handler: AntPlusHandler? = null
         try {
-            val activeHandler = handlerFactory(scope)
+            val activeHandler = createHandler(scope)
             handler = activeHandler
             activeHandler.initialize()
             session = Session(scope, activeHandler)

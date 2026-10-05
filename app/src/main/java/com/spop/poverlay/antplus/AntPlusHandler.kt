@@ -42,7 +42,9 @@ import timber.log.Timber
 class AntPlusHandler(
     private val context: Context,
     private val deviceName: String,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    /** FE-C smart trainer profile; null keeps the transmit-only power/speed/HR channels. */
+    private val fec: FecTrainer? = null
 ) : ServiceConnection {
 
     companion object {
@@ -62,10 +64,13 @@ class AntPlusHandler(
     private var antChannel: AntChannel? = null  // Power meter channel
     private var cscChannel: AntChannel? = null  // Speed/Cadence channel
     private var hrmChannel: AntChannel? = null  // Heart Rate Monitor channel
+    private var fecChannel: AntChannel? = null  // FE-C smart trainer channel
     private var isServiceBound = false
     private var isChannelOpen = false
     private var isCscChannelOpen = false
     private var isHrmChannelOpen = false
+    private var isFecChannelOpen = false
+    private var fecCollisionCount = 0
     private var currentTransmissionType: Int = -1
 
     @Volatile
@@ -228,6 +233,44 @@ class AntPlusHandler(
         }
     }
 
+    private val fecChannelEventHandler = object : IAntChannelEventHandler {
+        override fun onChannelDeath() {
+            logWarn("ANT_DEBUG: ANT FE-C channel died")
+            synchronized(this@AntPlusHandler) {
+                fecChannel = null
+                isFecChannelOpen = false
+            }
+            fec?.reset()
+        }
+
+        override fun onReceiveMessage(messageType: MessageFromAntType, messageParcel: AntMessageParcel) {
+            when (messageType) {
+                MessageFromAntType.ACKNOWLEDGED_DATA ->
+                    fec?.onAcknowledged(AcknowledgedDataMessage(messageParcel).payload)
+
+                MessageFromAntType.CHANNEL_EVENT -> {
+                    when (val eventCode = ChannelEventMessage(messageParcel).eventCode) {
+                        // An acknowledged reply replaces a TX event; keep the rotation moving.
+                        EventCode.TX, EventCode.TRANSFER_TX_COMPLETED, EventCode.TRANSFER_TX_FAILED -> pushFecPayload()
+                        EventCode.CHANNEL_CLOSED -> {
+                            logDebug("ANT_DEBUG: ANT FE-C channel closed")
+                            synchronized(this@AntPlusHandler) { isFecChannelOpen = false }
+                            fec?.reset()
+                        }
+                        EventCode.CHANNEL_COLLISION -> {
+                            // FE-C's 8192 period beats against power's 8182; measure how often slots are lost.
+                            val count = synchronized(this@AntPlusHandler) { ++fecCollisionCount }
+                            if (count % PayloadDebugEveryNMessages == 1) logDebug("ANT_DEBUG: FE-C channel collisions=$count")
+                        }
+                        else -> logDebug("ANT_DEBUG: FE-C channel event=$eventCode")
+                    }
+                }
+
+                else -> Unit
+            }
+        }
+    }
+
     @Synchronized
     fun initialize() {
         if (!scope.isActive) return
@@ -385,6 +428,7 @@ class AntPlusHandler(
                 // Also set up CSC (Speed/Cadence) and HRM channels on separate devices
                 setupCscChannel(channelProvider, transmissionType)
                 setupHrmChannel(channelProvider, transmissionType)
+                if (fec != null) setupFecChannel(channelProvider, transmissionType)
 
                 if (DiscoveryModeEnabled) {
                     logDebug("ANT_DEBUG: Discovery mode active (mock: power=${DiscoveryModePowerWatts}W cadence=${DiscoveryModeCadenceRpm}rpm)")
@@ -496,6 +540,7 @@ class AntPlusHandler(
     fun broadcastPowerData(powerWatts: Int, cadenceRpm: Int) {
         latestPowerWatts = powerWatts.coerceAtLeast(0)
         latestCadenceRpm = cadenceRpm.coerceAtLeast(0)
+        fec?.update(latestPowerWatts, latestCadenceRpm)
         // TX events drive actual message cadence; this just updates latest values.
     }
 
@@ -507,6 +552,7 @@ class AntPlusHandler(
     @Synchronized
     fun broadcastSpeedData(speedKmh: Float) {
         latestSpeedKmh = speedKmh.coerceAtLeast(0.0f)
+        fec?.updateSpeed(latestSpeedKmh)
     }
 
     /**
@@ -728,6 +774,8 @@ class AntPlusHandler(
         isChannelOpen = false
         isCscChannelOpen = false
         isHrmChannelOpen = false
+        isFecChannelOpen = false
+        fecCollisionCount = 0
         currentTransmissionType = -1
         hasSentInitializationPage = false
         eventCount = 0
@@ -765,9 +813,17 @@ class AntPlusHandler(
             logWarn("ANT_DEBUG: Error releasing HRM channel", e)
         }
 
+        try {
+            fecChannel?.release()
+        } catch (e: Exception) {
+            logWarn("ANT_DEBUG: Error releasing FE-C channel", e)
+        }
+
         antChannel = null
         cscChannel = null
         hrmChannel = null
+        fecChannel = null
+        fec?.reset()
     }
 
     private fun ByteArray.toHexString(): String = joinToString(separator = " ") { byte ->
@@ -851,6 +907,7 @@ class AntPlusHandler(
                 val provider = antChannelProvider ?: return
                 if (!isCscChannelOpen) setupCscChannel(provider, currentTransmissionType)
                 if (!isHrmChannelOpen) setupHrmChannel(provider, currentTransmissionType)
+                if (fec != null && !isFecChannelOpen) setupFecChannel(provider, currentTransmissionType)
             }
         }
     }
@@ -863,6 +920,7 @@ class AntPlusHandler(
             val provider = antChannelProvider ?: return
             if (!isCscChannelOpen) setupCscChannel(provider, currentTransmissionType)
             if (!isHrmChannelOpen) setupHrmChannel(provider, currentTransmissionType)
+            if (fec != null && !isFecChannelOpen) setupFecChannel(provider, currentTransmissionType)
             return
         }
         logDebug("ANT_DEBUG: boot-retry: no channel open, reconnecting ANT service")
@@ -871,7 +929,8 @@ class AntPlusHandler(
     }
 
     @Synchronized
-    fun isChannelReady(): Boolean = isChannelOpen && isCscChannelOpen && isHrmChannelOpen
+    fun isChannelReady(): Boolean = isChannelOpen && isCscChannelOpen && isHrmChannelOpen &&
+        (fec == null || isFecChannelOpen)
 
     private fun logDebug(message: String) = Timber.d(message)
 
@@ -963,6 +1022,71 @@ class AntPlusHandler(
             isHrmChannelOpen = false
             val cause = (e as? java.lang.reflect.InvocationTargetException)?.targetException ?: e
             logWarn("ANT_DEBUG: Failed to setup HRM channel — ${cause.javaClass.simpleName}: ${cause.message}", e)
+        }
+    }
+
+    private fun setupFecChannel(channelProvider: AntChannelProvider, transmissionType: Int) {
+        try {
+            val fecChannelAcquired = acquireChannelByNetworkId(channelProvider, networkId = 1)
+                ?: throw IllegalStateException("Failed to acquire FE-C channel")
+            fecChannel = fecChannelAcquired
+
+            fecChannelAcquired.setChannelEventHandler(fecChannelEventHandler)
+            fecChannelAcquired.assign(ChannelType.BIDIRECTIONAL_MASTER)
+            fecChannelAcquired.setPeriod(AntPlusConstants.FEC_PERIOD)
+
+            try {
+                fecChannelAcquired.setRfFrequency(AntPlusConstants.ANT_RF_FREQ)
+            } catch (e: AntCommandFailedException) {
+                logDebug("ANT_DEBUG: FE-C RF frequency rejected (managed network)")
+            }
+
+            try {
+                val maxTxPower = fecChannelAcquired.getCapabilities().maxOutputPowerLevelSetting
+                fecChannelAcquired.setTransmitPower(maxTxPower)
+            } catch (e: Exception) {
+                logWarn("ANT_DEBUG: Failed to set FE-C transmit power", e)
+            }
+
+            fecChannelAcquired.setChannelId(
+                ChannelId(AntPlusConstants.FEC_DEVICE_NUMBER, AntPlusConstants.DEVICE_TYPE_FITNESS_EQUIPMENT, transmissionType)
+            )
+
+            fecChannelAcquired.open()
+            fecChannel = fecChannelAcquired
+            isFecChannelOpen = true
+            pushFecPayload()
+            logDebug("ANT_DEBUG: FE-C trainer channel opened on networkId=1 as device ${AntPlusConstants.FEC_DEVICE_NUMBER}")
+        } catch (e: Exception) {
+            runCatching { fecChannel?.release() }
+            fecChannel = null
+            isFecChannelOpen = false
+            val cause = (e as? java.lang.reflect.InvocationTargetException)?.targetException ?: e
+            logWarn("ANT_DEBUG: Failed to setup FE-C channel — ${cause.javaClass.simpleName}: ${cause.message}", e)
+        }
+    }
+
+    @Synchronized
+    private fun pushFecPayload() {
+        val trainer = fec ?: return
+        val channel = fecChannel ?: return
+        if (!isFecChannelOpen) return
+        val page = trainer.nextPage()
+        try {
+            if (page.acknowledged) {
+                try {
+                    channel.startSendAcknowledgedData(page.bytes)
+                    return
+                } catch (e: AntCommandFailedException) {
+                    // A transfer is already in flight; fall back to a broadcast reply.
+                    logDebug("ANT_DEBUG: FE-C acknowledged reply busy, broadcasting page ${page.bytes[0].toInt() and 0xFF}")
+                }
+            }
+            channel.setBroadcastData(page.bytes)
+        } catch (e: RemoteException) {
+            logError("ANT_DEBUG: Failed to queue FE-C payload", e)
+        } catch (e: AntCommandFailedException) {
+            logError("ANT_DEBUG: ANT command failed while queuing FE-C payload", e)
         }
     }
 
