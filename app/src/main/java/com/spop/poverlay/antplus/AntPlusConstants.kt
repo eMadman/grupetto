@@ -38,6 +38,30 @@ object AntPlusConstants {
     // HRM specific
     const val HRM_PAGE_DATA = 0 // Main HRM data page (page 0)
 
+    // ANT+ FE-C (Fitness Equipment Control) smart trainer
+    const val DEVICE_TYPE_FITNESS_EQUIPMENT = 17
+    const val FEC_DEVICE_NUMBER = 4
+    const val FEC_PERIOD = 8192 // FE-C requires 4.00Hz
+    const val FEC_PAGE_GENERAL = 16
+    const val FEC_PAGE_TRAINER = 25
+    const val FEC_PAGE_BASIC_RESISTANCE = 48
+    const val FEC_PAGE_TARGET_POWER = 49
+    const val FEC_PAGE_WIND_RESISTANCE = 50
+    const val FEC_PAGE_TRACK_RESISTANCE = 51
+    const val FEC_PAGE_CAPABILITIES = 54
+    const val FEC_PAGE_USER_CONFIGURATION = 55
+    const val FEC_PAGE_REQUEST = 70
+    const val FEC_PAGE_COMMAND_STATUS = 71
+    const val FEC_EQUIPMENT_TYPE_TRAINER = 25
+    const val FEC_STATE_READY = 2
+    const val FEC_STATE_IN_USE = 3
+    const val FEC_CAPABILITY_FLAGS = 0x0C // distance traveled enabled, virtual speed
+    const val FEC_CONTROL_CAPABILITIES = 0x07 // basic resistance, target power, simulation
+    const val FEC_MAX_RESISTANCE_NEWTONS = 1000 // nominal; Peloton resistance has no force calibration
+    const val FEC_COMMON_PAGE_INTERVAL = 64
+    const val FEC_LEASE_IDLE_MS = 30_000L
+    const val FEC_PRODUCT_INSTANCE = 0x04
+
     // ANT+ message sizes
     const val ANT_MESSAGE_SIZE = 8 // Standard ANT message payload is 8 bytes
 }

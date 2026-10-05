@@ -2,6 +2,7 @@ package com.spop.poverlay.antplus
 
 import android.content.Context
 import android.content.pm.PackageInfo
+import com.spop.poverlay.control.BikeControl
 import com.spop.poverlay.sensor.interfaces.DeviceType
 import com.spop.poverlay.sensor.interfaces.SensorInterface
 import io.mockk.*
@@ -88,5 +89,37 @@ class AntPlusServerTest {
         assertEquals(120, withTimeout(5000) { readings.receive() })
         hr.value = null
         assertEquals(0, withTimeout(5000) { readings.receive() })
+    }
+
+    @Test fun `toggling FE-C restarts only a running session`() {
+        server.setFecEnabled(true)
+        verify(exactly = 0) { handler.initialize() }
+        server.start()
+        server.setFecEnabled(true)
+        verify(exactly = 1) { handler.initialize() }
+        server.setFecEnabled(false)
+        verify(exactly = 1) { handler.shutdown() }
+        verify(exactly = 2) { handler.initialize() }
+        assertFalse(scopes.first().isActive)
+        assertTrue(scopes.last().isActive)
+    }
+
+    @Test fun `FE-C profile is only built for an enabled controllable bike`() {
+        every { sensor.bikeControl } returns null
+        server.setFecEnabled(true)
+        assertFalse(server.fecSupported)
+        assertNull(server.newFecTrainer())
+        every { sensor.bikeControl } returns BikeControl(false, { 0L }) { true }
+        assertFalse(server.fecSupported)
+        assertNull(server.newFecTrainer())
+        every { sensor.bikeControl } returns BikeControl(true, { 0L }) { true }
+        assertTrue(server.fecSupported)
+        assertNotNull(server.newFecTrainer())
+        server.setFecEnabled(false)
+        assertNull(server.newFecTrainer())
+        server.setFecEnabled(true)
+        every { sensor.deviceType } returns DeviceType.Tread
+        assertFalse(server.fecSupported)
+        assertNull(server.newFecTrainer())
     }
 }

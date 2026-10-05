@@ -65,6 +65,7 @@ class BikeControl(
     private var pausedShift = 0
     private var pausedResistance = 0
     private var externalPower: com.spop.poverlay.sensor.power.ExternalPowerReading? = null
+    private var externalClient: String? = null
 
     @Synchronized fun useExternalPower(reading: com.spop.poverlay.sensor.power.ExternalPowerReading?) {
         val next = reading?.takeIf { com.spop.poverlay.sensor.power.freshExternalPower(it, clock()) != null }
@@ -115,8 +116,13 @@ class BikeControl(
             targetResistance = sample?.resistance ?: state.value.targetResistance,
             permissionLostCount = state.value.permissionLostCount + if (lostPermission) 1 else 0)
     }
-    @Synchronized fun disconnect(client: String) { if (owner == client) stop("Controller disconnected") }
-    @Synchronized fun disconnectTransport(prefix: String) { if (owner?.startsWith(prefix) == true) stop("Controller disconnected") }
+    @Synchronized fun disconnect(client: String) { if (owner == client || releasedLeaseFrom { it == client }) stop("Controller disconnected") }
+    @Synchronized fun disconnectTransport(prefix: String) {
+        if (owner?.startsWith(prefix) == true || releasedLeaseFrom { it.startsWith(prefix) }) stop("Controller disconnected")
+    }
+    // A released idle lease leaves its target running; losing that transport must still stop it.
+    private fun releasedLeaseFrom(match: (String) -> Boolean) =
+        owner == null && state.value.externalControl != null && externalClient?.let(match) == true
 
     private fun setMode(mode: ControlMode) {
         pausedMode = null
@@ -262,31 +268,81 @@ class BikeControl(
             4 -> {
                 // Corrected FTMS format: SINT16 in tenths (FTMS TS p6 BV-25-C).
                 val level = signed(1)
-                if (level !in 0..1000 || level % 10 != 0) Reply(3) else {
-                    setMode(ControlMode.Resistance)
-                    mutableState.value = state.value.copy(targetResistance = level / 10, message = "Manual active")
-                    Reply(1, byteArrayOf(7) + bytes.copyOfRange(1, 3))
-                }
+                if (level !in 0..1000 || level % 10 != 0) Reply(3)
+                else Reply(command(client, RemoteCommand.Resistance(level / 10))).withStatus(byteArrayOf(7) + bytes.copyOfRange(1, 3))
             }
-            5 -> {
-                val watts = signed(1)
-                if (watts !in 25..1000) Reply(3) else {
-                    setMode(ControlMode.Erg)
-                    mutableState.value = state.value.copy(targetWatts = watts)
-                    Reply(1, byteArrayOf(8) + bytes.copyOfRange(1, 3))
-                }
-            }
-            else -> {
-                simulation = Simulation(signed(1) * .001f, signed(3) * .01f,
-                    (bytes[5].toInt() and 255) * .0001f, (bytes[6].toInt() and 255) * .01f)
-                setMode(ControlMode.Simulation)
-                mutableState.value = state.value.copy(targetIncline = simulation.grade)
-                Reply(1, byteArrayOf(0x12) + bytes.copyOfRange(1, 7))
-            }
+            5 -> Reply(command(client, RemoteCommand.Erg(signed(1)))).withStatus(byteArrayOf(8) + bytes.copyOfRange(1, 3))
+            else -> Reply(command(client, RemoteCommand.Sim(Simulation(signed(1) * .001f, signed(3) * .01f,
+                (bytes[5].toInt() and 255) * .0001f, (bytes[6].toInt() and 255) * .01f))))
+                .withStatus(byteArrayOf(0x12) + bytes.copyOfRange(1, 7))
         }
-        if (reply.result == 1 && (op == 4 || op == 5 || op == 0x11 || (op == 7 && state.value.mode != ControlMode.Manual))) {
-            mutableState.value = state.value.copy(externalControl = if (client.startsWith("dircon:")) "DirCon" else "Bluetooth")
-        }
+        if (reply.result == 1 && op == 7 && state.value.mode != ControlMode.Manual) markExternal(client)
         return reply
+    }
+    private fun Reply.withStatus(status: ByteArray) = if (result == 1) copy(status = status) else this
+
+    /** Transport-neutral remote targets shared by FTMS, DirCon and ANT+ FE-C. */
+    sealed interface RemoteCommand {
+        data class Resistance(val level: Int) : RemoteCommand
+        data class Erg(val watts: Int) : RemoteCommand
+        data class Sim(val simulation: Simulation) : RemoteCommand
+    }
+
+    /**
+     * Applies a remote target and returns an FTMS result code: 1 success, 2 unsupported,
+     * 3 invalid, 4 failed (stale data), 5 another client owns control. FE-C has no
+     * Request Control procedure, so ANT+ passes [implicitAcquire] to take a free lease.
+     */
+    @Synchronized fun command(client: String, command: RemoteCommand, implicitAcquire: Boolean = false): Int {
+        if (!supported) return 2
+        if (!fresh()) return 4
+        if (implicitAcquire && owner == null) owner = client
+        if (owner != client) return 5
+        when (command) {
+            is RemoteCommand.Resistance -> {
+                if (command.level !in 0..100) return 3
+                setMode(ControlMode.Resistance)
+                mutableState.value = state.value.copy(targetResistance = command.level, message = "Manual active")
+            }
+            is RemoteCommand.Erg -> {
+                if (command.watts !in 25..1000) return 3
+                setMode(ControlMode.Erg)
+                mutableState.value = state.value.copy(targetWatts = command.watts)
+            }
+            is RemoteCommand.Sim -> {
+                val sim = command.simulation
+                if (!sim.wind.isFinite() || !sim.grade.isFinite() || !sim.rolling.isFinite() || !sim.drag.isFinite()) return 3
+                simulation = sim
+                setMode(ControlMode.Simulation)
+                mutableState.value = state.value.copy(targetIncline = sim.grade)
+            }
+        }
+        markExternal(client)
+        return 1
+    }
+
+    /** Frees an idle remote lease while keeping the active mode and target running. */
+    @Synchronized fun releaseOwner(client: String) { if (owner == client) owner = null }
+
+    /** FE-C target power limit: 0 at target or not in ERG, 1 speed too low, 2 speed too high. */
+    @Synchronized fun targetLimit(): Int {
+        if (state.value.mode != ControlMode.Erg) return 0
+        val reading = sample ?: return 0
+        if (reading.cadence < 25f) return 1
+        val error = state.value.targetWatts - (filteredPower ?: return 0)
+        return when {
+            requestedResistance >= 100f && error > 3f -> 1
+            requestedResistance <= 0f && error < -3f -> 2
+            else -> 0
+        }
+    }
+
+    private fun markExternal(client: String) {
+        externalClient = client
+        mutableState.value = state.value.copy(externalControl = when {
+            client.startsWith("dircon:") -> "DirCon"
+            client.startsWith("ant:") -> "ANT+"
+            else -> "Bluetooth"
+        })
     }
 }

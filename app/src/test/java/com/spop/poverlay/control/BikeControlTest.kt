@@ -366,4 +366,77 @@ class BikeControlTest {
         assertFalse(control.localSimulation(Float.POSITIVE_INFINITY))
         assertEquals(before, control.state.value)
     }
+
+    @Test fun implicitAcquireTakesOnlyAFreeLeaseAndLabelsAnt() {
+        sample()
+        assertEquals(5, control.command("ant:fec", BikeControl.RemoteCommand.Erg(200)))
+        assertEquals(1, control.command("ant:fec", BikeControl.RemoteCommand.Erg(200), implicitAcquire = true))
+        assertEquals(ControlMode.Erg, control.state.value.mode)
+        assertEquals(200, control.state.value.targetWatts)
+        assertEquals("ANT+", control.state.value.externalControl)
+        // First owner wins: FTMS clients cannot take the lease while ANT+ holds it.
+        assertEquals(5, command(0).result)
+        assertEquals(5, control.command("ble:a", BikeControl.RemoteCommand.Erg(150), implicitAcquire = true))
+    }
+    @Test fun commandValidatesTargetsLikeFtms() {
+        sample()
+        val ant = "ant:fec"
+        assertEquals(3, control.command(ant, BikeControl.RemoteCommand.Erg(24), implicitAcquire = true))
+        assertEquals(3, control.command(ant, BikeControl.RemoteCommand.Erg(1001)))
+        assertEquals(3, control.command(ant, BikeControl.RemoteCommand.Resistance(101)))
+        assertEquals(3, control.command(ant, BikeControl.RemoteCommand.Sim(Simulation(0f, Float.NaN, .004f, .51f))))
+        assertEquals(ControlMode.Manual, control.state.value.mode)
+        assertEquals(1, control.command(ant, BikeControl.RemoteCommand.Resistance(55)))
+        assertEquals(ControlMode.Resistance, control.state.value.mode)
+        assertEquals(55, control.state.value.targetResistance)
+        assertEquals(1, control.command(ant, BikeControl.RemoteCommand.Sim(Simulation(0f, 4.5f, .004f, .51f))))
+        assertEquals(ControlMode.Simulation, control.state.value.mode)
+        assertEquals(4.5f, control.state.value.targetIncline, 0f)
+        now += 1501
+        control.tick()
+        assertEquals(4, control.command(ant, BikeControl.RemoteCommand.Erg(200)))
+    }
+    @Test fun releaseOwnerKeepsModeButFreesLease() {
+        sample()
+        assertEquals(1, control.command("ant:fec", BikeControl.RemoteCommand.Erg(220), implicitAcquire = true))
+        control.releaseOwner("ble:a")
+        assertEquals(5, command(0).result)
+        control.releaseOwner("ant:fec")
+        assertEquals(ControlMode.Erg, control.state.value.mode)
+        assertEquals(220, control.state.value.targetWatts)
+        assertEquals(1, command(0).result)
+        assertEquals(1, command(5, 150, 0).result)
+        assertEquals(150, control.state.value.targetWatts)
+        assertEquals("Bluetooth", control.state.value.externalControl)
+    }
+    @Test fun disconnectTransportStopsAntControl() {
+        sample()
+        control.command("ant:fec", BikeControl.RemoteCommand.Erg(220), implicitAcquire = true)
+        control.disconnectTransport("ble:")
+        assertEquals(ControlMode.Erg, control.state.value.mode)
+        control.disconnectTransport("ant:")
+        assertEquals(ControlMode.Manual, control.state.value.mode)
+        assertEquals(1, command(0).result)
+    }
+    @Test fun targetLimitReportsWhenErgCannotReachTarget() {
+        assertEquals(0, control.targetLimit())
+        resistance = 100
+        sample(power = 100f)
+        control.command("ant:fec", BikeControl.RemoteCommand.Erg(300), implicitAcquire = true)
+        sample(power = 100f)
+        assertEquals(1, control.targetLimit())
+        sample(power = 100f, cadence = 10f)
+        assertEquals(1, control.targetLimit())
+
+        val low = BikeControl(true, { now }) { true }
+        low.acceptSample(BikeSample(400f, 80f, 0, now))
+        low.command("ant:fec", BikeControl.RemoteCommand.Erg(100), implicitAcquire = true)
+        now += 200
+        low.acceptSample(BikeSample(400f, 80f, 0, now))
+        low.tick()
+        assertEquals(2, low.targetLimit())
+
+        control.command("ant:fec", BikeControl.RemoteCommand.Resistance(50))
+        assertEquals(0, control.targetLimit())
+    }
 }

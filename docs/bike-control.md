@@ -52,11 +52,12 @@ one integer resistance argument, and the remote exception reply.
   A new target is required after these events. The physical knob is not fought:
   no further write occurs while the reported target differs from the expected
   target; after 1.5 seconds control is relinquished.
-- Local settings and shifts do not acquire or revoke remote FTMS ownership.
-  The next accepted Bluetooth or DirCon command overrides the local mode and
+- Local settings and shifts do not acquire or revoke remote ownership.
+  The next accepted Bluetooth, DirCon or ANT+ command overrides the local mode and
   target, including the controls in an open settings dialog. Only one remote
-  client may own control at a time. BLE shutdown/restart releases BLE ownership.
-- The dashboard and trainer dialog show **External control · Bluetooth/DirCon**
+  client may own control at a time; the first owner wins. BLE shutdown/restart
+  releases BLE ownership, and ANT+ shutdown or FE-C channel loss releases ANT+.
+- The dashboard and trainer dialog show **External control · Bluetooth/DirCon/ANT+**
   after an accepted remote target or resume. Request Control alone does not show
   it. Local mode/target/shift actions, Stop/Reset/Pause, disconnects, and safety
   stops clear it. The flag indicates the source of active control, not radio traffic.
@@ -83,6 +84,25 @@ DirCon uses the same parser/controller, with a unique identity per TCP session
 and control-point responses routed only to the requesting subscribed session.
 Targets are accepted asynchronously; a subsequent motor failure relinquishes
 control and emits Control Permission Lost.
+
+## ANT+ FE-C
+
+The optional ANT+ smart trainer channel (FE-C, device type 17, ID 4) maps
+Garmin-style commands onto the same controller as FTMS:
+
+| FE-C page | Effect |
+|---|---|
+| 48 Basic Resistance (0.5 % units) | Resistance mode, rounded to Peloton levels 0–100 |
+| 49 Target Power (0.25 W units) | ERG, clamped to 25–1000 W |
+| 50 Wind Resistance | Cached wind coefficient × drafting factor and wind speed for Sim |
+| 51 Track Resistance | Sim with grade and rolling resistance, plus the cached wind values |
+
+FE-C has no Request Control procedure, so the first accepted command takes a
+free lease. Commands are rejected (Command Status 3) while a Bluetooth or DirCon
+client owns control. After 30 seconds without an ANT+ command the lease is
+released but the active mode and target keep running, so a long ERG step is not
+dropped and another controller can take over. Page 25 reports "speed too low"
+below 25 rpm or at maximum resistance, and "speed too high" at minimum resistance.
 
 ## Developer emulation
 
