@@ -65,6 +65,7 @@ class BikeControl(
     private var pausedShift = 0
     private var pausedResistance = 0
     private var externalPower: com.spop.poverlay.sensor.power.ExternalPowerReading? = null
+    private var externalClient: String? = null
 
     @Synchronized fun useExternalPower(reading: com.spop.poverlay.sensor.power.ExternalPowerReading?) {
         val next = reading?.takeIf { com.spop.poverlay.sensor.power.freshExternalPower(it, clock()) != null }
@@ -115,8 +116,13 @@ class BikeControl(
             targetResistance = sample?.resistance ?: state.value.targetResistance,
             permissionLostCount = state.value.permissionLostCount + if (lostPermission) 1 else 0)
     }
-    @Synchronized fun disconnect(client: String) { if (owner == client) stop("Controller disconnected") }
-    @Synchronized fun disconnectTransport(prefix: String) { if (owner?.startsWith(prefix) == true) stop("Controller disconnected") }
+    @Synchronized fun disconnect(client: String) { if (owner == client || releasedLeaseFrom { it == client }) stop("Controller disconnected") }
+    @Synchronized fun disconnectTransport(prefix: String) {
+        if (owner?.startsWith(prefix) == true || releasedLeaseFrom { it.startsWith(prefix) }) stop("Controller disconnected")
+    }
+    // A released idle lease leaves its target running; losing that transport must still stop it.
+    private fun releasedLeaseFrom(match: (String) -> Boolean) =
+        owner == null && state.value.externalControl != null && externalClient?.let(match) == true
 
     private fun setMode(mode: ControlMode) {
         pausedMode = null
@@ -332,6 +338,7 @@ class BikeControl(
     }
 
     private fun markExternal(client: String) {
+        externalClient = client
         mutableState.value = state.value.copy(externalControl = when {
             client.startsWith("dircon:") -> "DirCon"
             client.startsWith("ant:") -> "ANT+"

@@ -659,35 +659,9 @@ class AntPlusHandler(
         return payload
     }
 
-    private fun buildManufacturerInfoPage(): ByteArray {
-        val payload = powerPayloadBuffer
-        payload[0] = AntPlusConstants.PAGE_MANUFACTURER_INFO.toByte()
-        payload[1] = 0xFF.toByte()
-        payload[2] = 0xFF.toByte()
-        payload[3] = AntPlusConstants.HARDWARE_REVISION.toByte()
-        // Manufacturer ID: use encoded value to help Garmin identify as Grupetto
-        // 12345 = 0x3039 in hex
-        payload[4] = (AntPlusConstants.MANUFACTURER_ID and 0xFF).toByte()           // 0x39 = 57
-        payload[5] = ((AntPlusConstants.MANUFACTURER_ID shr 8) and 0xFF).toByte()   // 0x30 = 48
-        // Model bytes: encode "GR" (Grupetto) as ASCII codes
-        payload[6] = 0x47.toByte()  // 'G'
-        payload[7] = 0x52.toByte()  // 'R'
-        return payload
-    }
+    private fun buildManufacturerInfoPage(): ByteArray = AntPlusPages.writeManufacturerInfo(powerPayloadBuffer)
 
-    private fun buildProductInfoPage(): ByteArray {
-        val payload = powerPayloadBuffer
-        payload[0] = AntPlusConstants.PAGE_PRODUCT_INFO.toByte()
-        payload[1] = 0xFF.toByte()
-        payload[2] = AntPlusConstants.SOFTWARE_REVISION_SUPPLEMENTAL.toByte()
-        payload[3] = AntPlusConstants.SOFTWARE_REVISION_MAIN.toByte()
-        // Serial number bytes: encode "EP" (Grupetto Power) as identifier
-        payload[4] = 0x45.toByte()  // 'E'
-        payload[5] = 0x50.toByte()  // 'P'
-        payload[6] = 0x00.toByte()  // version
-        payload[7] = 0x01.toByte()  // instance
-        return payload
-    }
+    private fun buildProductInfoPage(): ByteArray = AntPlusPages.writeProductInfo(powerPayloadBuffer)
 
     /**
      * CSC (Cycling Speed and Cadence) combined data page.
